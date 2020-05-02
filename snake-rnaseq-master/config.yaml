@@ -1,0 +1,16 @@
+# EXAMPLE config file for snake-combine-rnaseq
+
+reference:
+  - path/to/reference/ # Make sure that no other fastq files than the ones you want to run are in this folder
+
+input_dir:
+  - path/to/fastq/files
+
+end:
+  - paired or single # must write either paired or single. case sensitive
+
+tx2gene:
+  - path to tx2gene table for summing TPM to gene level
+
+transcriptome:
+  - path to transcriptome

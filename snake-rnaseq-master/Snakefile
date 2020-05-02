@@ -1,0 +1,178 @@
+from os.path import join, basename, dirname
+import pandas as pd
+from glob import glob
+import os
+
+# -----------
+# CONFIG FILE
+# -----------
+
+REFERENCE = config['reference']
+INPUT_DIR = config['input_dir']# Location of fastq files
+TX2GENE=config['tx2gene']
+TRANS=config['transcriptome']
+SMP_FILE=config['samples']
+
+
+# -----------------
+# VARIABLES PARSING
+# -----------------
+SAMPLES = [line. rstrip('\n') for line in open(SMP_FILE)]
+
+def parse_filename(filename, read):
+  key = filename
+  value = filename + read
+  return key, value
+
+if config['end']=='paired':
+    R1 = dict([parse_filename(smp,"_1") for smp in SAMPLES])
+    R2 = dict([parse_filename(smp,"_2") for smp in SAMPLES])
+    END = "--paired"
+else:
+    END = ""
+
+# input function
+def tpm_in(wildcards):
+	files = expand("results/quant/{samples}/quant.sf", samples = SAMPLES)
+	return files
+
+# ---------------
+#    RULES
+# ---------------
+
+rule all:
+  input:
+    "results/quant.tsv.gz",
+    "results/allSamplesTPM.tsv"
+
+# ---------------
+# QUALITY CONTROL
+# ---------------
+
+rule qc:
+  input:
+    INPUT_DIR+"{samples}.fastq.gz"
+  output:
+    "results/qc/{samples}_fastqc.html"
+  params:
+    "results/qc"
+  shell:
+    """
+    fastqc -o {params} {input}
+    """
+
+if config['end']=='single':
+  rule trim_SE:
+    input:
+      INPUT_DIR+"{samples}.fastq.gz"
+    output:
+      "results/data_trimmed/{samples}_trimmed.fq.gz"
+    params:
+      "results/data_trimmed/"
+    shell:
+      """
+      trim_galore -q 20 --phred33 --length 20 {END} -o {params} {input}
+      """
+
+#else:
+#  rule trim_PE:
+#    input:
+#    output:
+#    params:
+#    shell:
+#      """
+#      trim_galore -q 20 --phred33 --length 20 --paired {read1} {read2} -o {sample}
+#      """	
+	
+rule qc_trimmed:
+  input:
+    "results/data_trimmed/{samples}_trimmed.fq.gz"
+  output:
+    "results/qc_trimmed/{samples}_trimmed_fastqc.html"
+  params:
+    "results/qc_trimmed"
+  shell:
+    """
+    fastqc -o {params} {input}
+    """
+
+# --------------------------
+# SALMON READ QUANTIFICATION
+# --------------------------
+
+rule salmon_index:
+  input:
+    ref = REFERENCE,
+    trans = TRANS
+  output:
+    directory(join('salmon_index', basename(REFERENCE).rstrip(".fa"))),
+  log:
+    "logs/salmon_index.log"
+  shell:
+    """
+    grep "^>" {input.ref} | cut -d " " -f 1 > results/decoys.txt
+    cat {input.trans} {input.ref} > results/gentrome.fa.gz
+    /share/dennislab/programs/salmon-1.1.0_linux_x86_64/bin/salmon index -t results/gentrome.fa.gz -d results/decoys.txt -i {output} 2> {log}
+    """
+
+if config['end']=='single':
+  rule salmon_single:
+    input:
+      index = rules.salmon_index.output,
+      read = "results/data_trimmed/{samples}_trimmed.fq.gz"
+    output:
+      'results/quant/{samples}/quant.sf'
+    log:
+      "logs/salmon_quant_{samples}.log"
+    shell:
+      """
+      salmon quant -i {input.index} -l U -r {input.read} -o results/quant/{wildcards.samples} 2> {log}
+      """
+else:
+  rule salmon_paired:
+    input:
+      index = rules.salmon_index.output,
+      read1 = R1.get(wildcards.samples),
+      read2 = R2.get(wildcards.samples)
+    output:
+      'results/quant/{samples}/quant.sf'
+    log:
+      "logs/salmon_quant_{samples}.log"
+    shell:
+      """
+      salmon quant --validateMappings --gcBias -i {input.index} -l IU -1 {input.read1} -2 {input.read2} -o results/quant/{wildcards.samples} 2> {log}
+      """
+
+rule collate_salmon:
+  input:
+    expand("results/quant/{samples}/quant.sf", samples = SAMPLES)
+  output:
+    "results/quant.tsv.gz"
+  run:
+    import gzip
+    b = lambda x: bytes(x, 'UTF8')
+    # Create the output file.
+    with gzip.open(output[0], 'wb') as out:
+      # Print the header.
+      header = open(input[0]).readline()
+      out.write(b('sample\t' + header))
+      for i in input:
+        sample = basename(dirname(i))
+        lines = open(i)
+        # Skip the header in each file.
+        lines.readline()
+        for line in lines:
+          out.write(b(sample + '\t' + line))
+
+rule tpm:
+  input:
+    expand("results/quant/{samples}/quant.sf", samples = SAMPLES),
+      TX2GENE,
+      SMP_FILE,
+  output:
+    "results/allSamplesTPM.tsv"
+  shell:
+    """
+    Rscript scripts/tximport.R {SMP_FILE} results/quant/ {TX2GENE}
+    mv allSamplesTPM.tsv results
+    """

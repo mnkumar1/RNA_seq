@@ -1,0 +1,119 @@
+"""
+Snakemake pipeline for RNA-seq read quantification with Salmon
+Author: Mira Mastoras, <mnmastoras@ucdavis.edu>
+"""
+
+import os
+import re
+import pandas as pd
+
+# -----------
+# CONFIG FILE
+# -----------
+
+FILENAMES = config['filenames']
+REFERENCE = config['reference']
+
+# -----------------
+# VARIABLE PARSING
+# -----------------
+
+def parse_filename(filename):
+    split_name = re.split("_", filename)[0:3]
+    sample = split_name[0] + '_' + split_name[1] + '_' + split_name[2]
+    id = re.split(".f", filename)[0]
+    return id , sample
+
+filelist = pd.read_csv(FILENAMES, delimiter = '\n', names = ['filename'])
+files = filelist['filename'].tolist() # list of all filenames with fastqc.gz extension
+sample_dict = dict([parse_filename(x) for x in files]) # list of sample names
+filenames  = list(sample_dict.keys())
+all_samples = list(sample_dict.values())
+SAMPLES = []
+for i in all_samples:
+    if i not in SAMPLES:
+        SAMPLES.append(i)
+
+# SAMPLES  = list of individuals such as 60_3_2
+# filenames = list of all fastq filenames without .fastq.gz extension such as 60_3_2_BD
+
+
+#---------------
+# WORKFLOW TARGET
+# ---------------
+
+rule all:
+  input:
+    expand("results/quant/{samples}/quant.sf", samples = SAMPLES),
+    expand("results/quant/{samples}/lib_format_counts.json", samples = SAMPLES),
+    expand("results/qc_trimmed/{files}.trimmed_fastqc.html", files = filenames),
+    expand("results/qc/{files}_fastqc.html", files = filenames)
+
+# ---------------
+# QUALITY CONTROL
+# ---------------
+
+rule qc:
+  input:
+    "data/{files}.fastq.gz"
+  output:
+    "results/qc/{files}_fastqc.html"
+  params:
+    "results/qc"
+  shell:
+    """
+    fastqc -o {params} {input}
+    """
+
+rule trimming:
+  input:
+    "data/{files}.fastq.gz"
+  output:
+    "results/data_trimmed/{files}.trimmed.fastq.gz"
+  params:
+    "results/data_trimmed/{files}.trimmed.out"
+  threads: 5
+  shell:
+    """
+    trimmomatic SE -threads {threads} -phred33 {input} {output} HEADCROP:22 SLIDINGWINDOW:4:20 MINLEN:20 &>{params}
+    """
+
+rule qc_trimmed:
+  input:
+    "results/data_trimmed/{files}.trimmed.fastq.gz"
+  output:
+    "results/qc_trimmed/{files}.trimmed_fastqc.html"
+  params:
+    "results/qc_trimmed"
+  shell:
+    """
+    fastqc -o {params} {input}
+    """
+
+
+# --------------------------
+# SALMON READ QUANTIFICATION
+# --------------------------
+
+rule salmon_index:
+  input:
+    REFERENCE
+  output:
+    directory("reference/salmon_index")
+  shell:
+    """
+    salmon index --index {output} --type quasi --transcripts {input}
+    """
+
+rule salmon_quant:
+  input:
+    GD = "results/data_trimmed/{samples}_GD.trimmed.fastq.gz",
+    BD = "results/data_trimmed/{samples}_BD.trimmed.fastq.gz",
+    index = "reference/salmon_index"
+  output:
+    "results/quant/{samples}/quant.sf" ,
+    "results/quant/{samples}/lib_format_counts.json"
+  shell:
+    """
+    salmon quant -i {input.index} --libType A -1 {input.GD} -2 {input.BD} -o results/quant/{wildcards.samples} --noLengthCorrection --validateMappings
+    """

@@ -1,16 +1,18 @@
 # EXAMPLE config file for snake-combine-rnaseq
 
 reference:
-  - path/to/reference/ # Make sure that no other fastq files than the ones you want to run are in this folder
+/share/dennislab/databases/data/vandeLeemput_CORTECON2014_RNAseq/hg38.noalt.fa.gz
 
 input_dir:
-  - path/to/fastq/files
+/share/dennislab/databases/data/vandeLeemput_CORTECON2014_RNAseq/input/
 
-end:
-  - paired or single # must write either paired or single. case sensitive
+end: single
+
 
 tx2gene:
-  - path to tx2gene table for summing TPM to gene level
+/share/dennislab/databases/data/vandeLeemput_CORTECON2014_RNAseq/tx2gene_gencode_v32.tsv
 
 transcriptome:
-  - path to transcriptome
+/share/dennislab/databases/data/vandeLeemput_CORTECON2014_RNAseq/gencode.v32.custom.rename.fa.gz
+
+samples: RNASEQsamples.txt
